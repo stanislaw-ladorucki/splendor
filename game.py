@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Self
+from typing import Self, Optional
 
 from constants import (
     MAX_PLAYER_TOKENS, MAX_PLAYERS, MIN_PLAYERS, SHOP_TIER_CARDS_COUNT, SHOP_TIER_COUNT,
@@ -10,7 +10,7 @@ from exceptions import (
     OverPlayerTokenLimit, OverPlayerLimit, NotEnoughPlayers, IllegalTokenSelection,
     IllegalCardReservation,
 )
-from items import DevelopmentCard, Noble, TIER_ONE_CARDS, TIER_TWO_CARDS, TIER_THREE_CARDS
+from cards import DevelopmentCard, TIER_ONE_CARDS, TIER_TWO_CARDS, TIER_THREE_CARDS, DevelopmentCards, DevelopmentCards
 from tokens import Tokens, Gems
 
 
@@ -22,9 +22,9 @@ class PlayerAction(Enum):
 
 @dataclass
 class Player:
-    reserved_cards: list[DevelopmentCard] = field(default_factory=list)
-    development_cards: list[DevelopmentCard] = field(default_factory=list)
-    nobles: list[Noble] = field(default_factory=list)
+    reserved_cards: DevelopmentCards = field(default_factory=DevelopmentCards)
+    development_cards: DevelopmentCards = field(default_factory=DevelopmentCards)
+    nobles: list['Noble'] = field(default_factory=list)
     tokens: Tokens = field(default_factory=Tokens)
 
     def get_development_cards_gem_value(self) -> Gems:
@@ -83,7 +83,7 @@ class Player:
 @dataclass
 class ShopTier:
     tier_numer: int = 1
-    restock_pile: list[DevelopmentCard] = field(default_factory=list)
+    restock_pile: DevelopmentCards = field(default_factory=DevelopmentCards)
     available_cards: list[DevelopmentCard] = field(default_factory=list)
 
     def __post_init__(self):
@@ -105,6 +105,12 @@ class ShopTier:
 
 
 @dataclass
+class Noble:
+    cost: Gems
+    prestige: int
+
+
+@dataclass
 class Shop:
     nobles: list[Noble] = field(default_factory=list)
     tiers: list[ShopTier] = field(default_factory=list)
@@ -113,16 +119,22 @@ class Shop:
         return self.tiers[tier + 1]
 
     @classmethod
-    def get_initial_shop_state(cls) -> Self:
+    def get_initial_shop_state(cls, card_pools: Optional[list[DevelopmentCards]] = None) -> Self:
         # TODO: add nobles
         # TODO: shuffle cards
-        return cls(
-            tiers=[
-                ShopTier(tier_numer=1, restock_pile=TIER_ONE_CARDS.copy()),
-                ShopTier(tier_numer=2, restock_pile=TIER_TWO_CARDS.copy()),
-                ShopTier(tier_numer=3, restock_pile=TIER_THREE_CARDS.copy()),
-            ]
-        )
+        card_pools = card_pools or [
+            DevelopmentCards(*TIER_ONE_CARDS),
+            DevelopmentCards(*TIER_TWO_CARDS),
+            DevelopmentCards(*TIER_THREE_CARDS),
+        ]
+
+        for pool in card_pools:
+            pool.shuffle()
+
+        return cls(tiers=[
+            ShopTier(tier_numer=i, restock_pile=pool)
+            for i, pool in enumerate(card_pools, start=1)
+        ])
 
 
 class Game:

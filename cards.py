@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from random import shuffle
+from typing import MutableSequence, TypeVar
 
 from tokens import Gems, Gem
 
@@ -11,11 +13,33 @@ class DevelopmentCard:
     tier: int
 
 
-@dataclass
-class Noble:
-    cost: Gems
-    prestige: int
+T = TypeVar('T')
 
+
+class AbstractCards(MutableSequence[T]):
+    def __init__(self, *cards: T):
+        self._cards: list[T] = list(cards)
+
+    def shuffle(self) -> None:
+        shuffle(self)
+
+    def insert(self, index, value):
+        return self._cards.insert(index, value)
+
+    def __getitem__(self, index):
+        return self._cards.__getitem__(index)
+
+    def __setitem__(self, index, value):
+        return self._cards.__setitem__(index, value)
+
+    def __delitem__(self, index):
+        return self._cards.__delitem__(index)
+
+    def __len__(self):
+        return self._cards.__len__()
+
+
+DevelopmentCards = AbstractCards[DevelopmentCard]
 
 TIER_ONE_CARDS = [
     DevelopmentCard(gem=Gem.ONYX, prestige=0, cost=Gems(diamond=1, sapphire=1, emerald=1, ruby=1, onyx=0), tier=1),
