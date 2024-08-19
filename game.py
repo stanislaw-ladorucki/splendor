@@ -8,9 +8,9 @@ from constants import (
 )
 from exceptions import (
     OverPlayerTokenLimit, OverPlayerLimit, NotEnoughPlayers, IllegalTokenSelection,
-    IllegalCardReservation,
+    IllegalCardReservation, InvalidShopTierCount,
 )
-from cards import DevelopmentCard, TIER_ONE_CARDS, TIER_TWO_CARDS, TIER_THREE_CARDS, DevelopmentCards, DevelopmentCards
+from cards import DevelopmentCard, TIER_ONE_CARDS, TIER_TWO_CARDS, TIER_THREE_CARDS, DevelopmentCards
 from tokens import Tokens, Gems
 
 
@@ -67,7 +67,7 @@ class Player:
         # TODO: implement drawing from the restock pile
         self._ensure_player_reserve_card_legal(game, card_placement)
         tier, column = card_placement
-        self.reserved_cards.append(game.shop.get_tier(tier).take_card(column))
+        self.reserved_cards.append(game.shop.get_tier(tier).pick_and_replace(column))
         self.tokens += game.community_tokens.pull(Tokens(gold=1))
 
     def _ensure_player_reserve_card_legal(self, game: 'Game', card_placement: tuple[int, int]):
@@ -79,12 +79,16 @@ class Player:
             # there are only three tiers
             raise IllegalCardReservation
 
+        if not game.shop.get_tier(tier).available_cards[column]:
+            # tried to pick an empty slot
+            raise IllegalCardReservation
+
 
 @dataclass
 class ShopTier:
     tier_numer: int = 1
     restock_pile: DevelopmentCards = field(default_factory=DevelopmentCards)
-    available_cards: list[DevelopmentCard] = field(default_factory=list)
+    available_cards: list[Optional[DevelopmentCard]] = field(default_factory=list)
 
     def __post_init__(self):
         self.available_cards += [  # ensure the correct amount of cards is available for sale
@@ -92,14 +96,14 @@ class ShopTier:
             for _ in range(SHOP_TIER_CARDS_COUNT - len(self.available_cards))
         ]
 
-    def take_card(self, index: int):
+    def pick_and_replace(self, index: int) -> Optional[DevelopmentCard]:
         # TODO: may raise index error
         card = self.available_cards[index]
-        try:
-            self.available_cards[index] = self.restock_pile.pop()
-
-        except IndexError:
-            self.available_cards.pop(index)
+        self.available_cards[index] = (
+            self.restock_pile and
+            self.restock_pile.pop() or
+            None
+        )
 
         return card
 
@@ -119,22 +123,28 @@ class Shop:
         return self.tiers[tier + 1]
 
     @classmethod
-    def get_initial_shop_state(cls, card_pools: Optional[list[DevelopmentCards]] = None) -> Self:
-        # TODO: add nobles
-        # TODO: shuffle cards
-        card_pools = card_pools or [
-            DevelopmentCards(*TIER_ONE_CARDS),
-            DevelopmentCards(*TIER_TWO_CARDS),
-            DevelopmentCards(*TIER_THREE_CARDS),
-        ]
+    def from_pools(cls, card_pools: list[DevelopmentCards], nobles: list[Noble]) -> Self:
+        if len(card_pools) != SHOP_TIER_COUNT:
+            raise InvalidShopTierCount
 
         for pool in card_pools:
             pool.shuffle()
 
-        return cls(tiers=[
-            ShopTier(tier_numer=i, restock_pile=pool)
-            for i, pool in enumerate(card_pools, start=1)
-        ])
+        return cls(
+            tiers=[
+                ShopTier(tier_numer=i, restock_pile=pool)
+                for i, pool in enumerate(card_pools, start=1)
+            ],
+            nobles=nobles,
+        )
+
+    @classmethod
+    def get_initial_shop_state(cls) -> Self:
+        return cls.from_pools([
+            DevelopmentCards(*TIER_ONE_CARDS),
+            DevelopmentCards(*TIER_TWO_CARDS),
+            DevelopmentCards(*TIER_THREE_CARDS),
+        ], [])
 
 
 class Game:

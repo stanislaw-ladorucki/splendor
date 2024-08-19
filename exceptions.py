@@ -44,3 +44,7 @@ class OverPlayerLimit(InvalidGameConfiguration):
 
 class NotEnoughPlayers(InvalidGameConfiguration):
     pass
+
+
+class InvalidShopTierCount(InvalidGameConfiguration):
+    pass
