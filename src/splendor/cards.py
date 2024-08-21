@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from random import shuffle
 from typing import MutableSequence, TypeVar
 
-from tokens import Gems, Gem
+from .tokens import Gem, Gems
 
 
 @dataclass

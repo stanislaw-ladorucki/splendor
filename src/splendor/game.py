@@ -1,17 +1,14 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Self, Optional
 
-from constants import (
-    MAX_PLAYER_TOKENS, MAX_PLAYERS, MIN_PLAYERS, SHOP_TIER_CARDS_COUNT, SHOP_TIER_COUNT,
-    MAX_PLAYER_RESERVED_CARDS,
+from .exceptions import (
+    OverPlayerTokenLimit, IllegalTokenSelection,
+    IllegalCardReservation,
 )
-from exceptions import (
-    OverPlayerTokenLimit, OverPlayerLimit, NotEnoughPlayers, IllegalTokenSelection,
-    IllegalCardReservation, InvalidShopTierCount,
-)
-from cards import DevelopmentCard, TIER_ONE_CARDS, TIER_TWO_CARDS, TIER_THREE_CARDS, DevelopmentCards
-from tokens import Tokens, Gems
+from .cards import DevelopmentCard, DevelopmentCards
+from .ruleset import Ruleset
+from .tokens import Tokens, Gems
 
 
 class PlayerAction(Enum):
@@ -20,12 +17,17 @@ class PlayerAction(Enum):
     BUY_CARD = 'buy_card'
 
 
-@dataclass
 class Player:
-    reserved_cards: DevelopmentCards = field(default_factory=DevelopmentCards)
-    development_cards: DevelopmentCards = field(default_factory=DevelopmentCards)
-    nobles: list['Noble'] = field(default_factory=list)
-    tokens: Tokens = field(default_factory=Tokens)
+    reserved_cards: DevelopmentCards
+    development_cards: DevelopmentCards
+    nobles: list['Noble']
+    tokens: Tokens
+
+    def __init__(self, ruleset: Ruleset, reserved_cards=None, development_cards=None, nobles=None, tokens=None):
+        self.reserved_cards = reserved_cards or DevelopmentCards()
+        self.development_cards = development_cards or DevelopmentCards()
+        self.nobles = nobles or []
+        self.tokens = tokens or Tokens()
 
     def get_development_cards_gem_value(self) -> Gems:
         return Gems(**{
@@ -33,11 +35,11 @@ class Player:
             for gem in Gems.TOKEN_TYPES
         })
 
-    def action_select_tokens(self, game: 'Game', tokens: Tokens) -> None:
+    def action_select_tokens(self, game: 'GameState', tokens: Tokens) -> None:
         self._ensure_player_select_tokens_legal(game, tokens)
         self.tokens += game.community_tokens.pull(tokens)
 
-        if self.tokens.get_total_count() > MAX_PLAYER_TOKENS:
+        if self.tokens.get_total_count() > game.ruleset.MAX_PLAYER_TOKENS:
             raise OverPlayerTokenLimit  # TODO: should allow discarding
 
     def _ensure_player_select_tokens_legal(self, game, tokens: Tokens):
@@ -63,19 +65,19 @@ class Player:
             # when three tokens are picked, they must all be of different king
             raise IllegalTokenSelection
 
-    def action_reserve_card(self, game: 'Game', card_placement: tuple[int, int]):
+    def action_reserve_card(self, game: 'GameState', card_placement: tuple[int, int]):
         # TODO: implement drawing from the restock pile
         self._ensure_player_reserve_card_legal(game, card_placement)
         tier, column = card_placement
         self.reserved_cards.append(game.shop.get_tier(tier).pick_and_replace(column))
         self.tokens += game.community_tokens.pull(Tokens(gold=1))
 
-    def _ensure_player_reserve_card_legal(self, game: 'Game', card_placement: tuple[int, int]):
+    def _ensure_player_reserve_card_legal(self, game: 'GameState', card_placement: tuple[int, int]):
         tier, column = card_placement
-        if len(self.reserved_cards) > MAX_PLAYER_RESERVED_CARDS:
+        if len(self.reserved_cards) > game.ruleset.MAX_PLAYER_RESERVED_CARDS:
             raise
 
-        if tier < 1 or tier > SHOP_TIER_COUNT:
+        if tier < 1 or tier > game.ruleset.SHOP_TIER_COUNT:
             # there are only three tiers
             raise IllegalCardReservation
 
@@ -84,16 +86,19 @@ class Player:
             raise IllegalCardReservation
 
 
-@dataclass
 class ShopTier:
     tier_numer: int = 1
-    restock_pile: DevelopmentCards = field(default_factory=DevelopmentCards)
-    available_cards: list[Optional[DevelopmentCard]] = field(default_factory=list)
+    restock_pile: DevelopmentCards
+    available_cards: list[Optional[DevelopmentCard]]
 
-    def __post_init__(self):
+    def __init__(self, ruleset: Ruleset, tier_numer=1, restock_pile=None, available_cards=None):
+        self.tier_numer = tier_numer
+        self.restock_pile = restock_pile or DevelopmentCards()
+        self.available_cards = available_cards or []
+
         self.available_cards += [  # ensure the correct amount of cards is available for sale
             self.restock_pile.pop()
-            for _ in range(SHOP_TIER_CARDS_COUNT - len(self.available_cards))
+            for _ in range(ruleset.SHOP_TIER_CARDS_COUNT - len(self.available_cards))
         ]
 
     def pick_and_replace(self, index: int) -> Optional[DevelopmentCard]:
@@ -114,81 +119,77 @@ class Noble:
     prestige: int
 
 
-@dataclass
 class Shop:
-    nobles: list[Noble] = field(default_factory=list)
-    tiers: list[ShopTier] = field(default_factory=list)
+    nobles: list[Noble]
+    tiers: list[ShopTier]
 
     def get_tier(self, tier):
         return self.tiers[tier + 1]
 
     @classmethod
-    def from_pools(cls, card_pools: list[DevelopmentCards], nobles: list[Noble]) -> Self:
-        if len(card_pools) != SHOP_TIER_COUNT:
-            raise InvalidShopTierCount
-
+    def from_pools(cls, ruleset: Ruleset, card_pools: list[DevelopmentCards], nobles: list[Noble]) -> Self:
         for pool in card_pools:
             pool.shuffle()
 
         return cls(
+            ruleset,
             tiers=[
-                ShopTier(tier_numer=i, restock_pile=pool)
+                ShopTier(ruleset, tier_numer=i, restock_pile=pool)
                 for i, pool in enumerate(card_pools, start=1)
             ],
             nobles=nobles,
         )
 
+    def __init__(self, ruleset: Ruleset, nobles=None, tiers=None):
+        self.nobles = nobles or []
+        self.tiers = tiers or []
+
     @classmethod
-    def get_initial_shop_state(cls) -> Self:
-        return cls.from_pools([
-            DevelopmentCards(*TIER_ONE_CARDS),
-            DevelopmentCards(*TIER_TWO_CARDS),
-            DevelopmentCards(*TIER_THREE_CARDS),
+    def get_initial_shop_state(cls, ruleset: Ruleset) -> Self:
+        return cls.from_pools(ruleset, [
+            DevelopmentCards(*ruleset.TIER_ONE_DEVELOPMENT_CARDS_POOL),
+            DevelopmentCards(*ruleset.TIER_TWO_DEVELOPMENT_CARDS_POOL),
+            DevelopmentCards(*ruleset.TIER_THREE_DEVELOPMENT_CARDS_POOL),
         ], [])
 
 
-class Game:
+class GameState:
+    ruleset: Ruleset
     player_turn: int = 0
     players: [Player]
     shop: Shop
     community_tokens: Tokens
 
     @classmethod
-    def start(cls, player_count: int) -> Self:
-        if player_count > MAX_PLAYERS:
-            raise OverPlayerLimit
-
-        if player_count < MIN_PLAYERS:
-            raise NotEnoughPlayers
-
+    def from_ruleset(cls, ruleset: Ruleset) -> Self:
         return cls(
-            players=cls._get_initial_players(player_count),
-            shop=cls._get_initial_shop_state(),
-            community_tokens=cls._get_initial_community_currency_value(player_count),
+            ruleset=ruleset,
+            players=cls._get_initial_player_states(ruleset),
+            shop=cls._get_initial_shop_state(ruleset),
+            community_tokens=cls._get_initial_community_currency_value(ruleset),
         )
 
-    def __init__(self, players, shop, community_tokens):
+    def __init__(self, ruleset, players, shop, community_tokens):
+        self.ruleset = ruleset
         self.players = players
         self.shop = shop
         self.community_tokens = community_tokens
         self.player_turn = 0
 
     @staticmethod
-    def _get_initial_community_currency_value(player_count: int) -> Tokens:
-        gem_count = (
-            4 if player_count < 3 else
-            5 if player_count < 4 else
-            7
+    def _get_initial_community_currency_value(ruleset: Ruleset) -> Tokens:
+        return Tokens(
+            gold=ruleset.COMMUNITY_GOLD_COUNT,
+            **{gem: ruleset.COMMUNITY_GEMS_COUNT for gem in Gems.TOKEN_TYPES}
         )
-        return Tokens(gold=5, **{gem: gem_count for gem in Gems.TOKEN_TYPES})
 
     @staticmethod
-    def _get_initial_players(player_count: int) -> ['Player']:
-        return [Player() for _ in range(player_count)]
+    def _get_initial_player_states(ruleset: Ruleset) -> ['Player']:
+        return [Player(ruleset) for _ in range(ruleset.PLAYER_COUNT)]
 
     @staticmethod
-    def _get_initial_shop_state():
-        return Shop.get_initial_shop_state()
+    def _get_initial_shop_state(ruleset: Ruleset):
+        return Shop.get_initial_shop_state(ruleset)
 
     def get_current_player(self) -> 'Player':
         return self.get_player(self.player_turn)

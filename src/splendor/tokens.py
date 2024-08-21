@@ -2,7 +2,7 @@ from collections import defaultdict
 from enum import Enum
 from typing import MutableMapping, Self
 
-from exceptions import InvalidTokenPullError
+from .exceptions import InvalidTokenPullError
 
 
 class Token(Enum):
