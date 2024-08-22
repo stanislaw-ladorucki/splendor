@@ -1,16 +1,20 @@
-from dataclasses import dataclass
 from random import shuffle
 from typing import MutableSequence, TypeVar
 
 from .tokens import Gem, Gems
 
 
-@dataclass
 class DevelopmentCard:
     gem: Gem
     prestige: int
     cost: Gems
     tier: int
+
+    def __init__(self, gem, prestige, cost, tier):
+        self.gem = gem
+        self.prestige = prestige
+        self.cost = cost
+        self.tier = tier
 
 
 T = TypeVar('T')
